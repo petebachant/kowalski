@@ -13,3 +13,4 @@ logs/
 conf/*
 !conf/*.template
 .DS_Store
+!uv.lock
