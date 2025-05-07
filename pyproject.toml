@@ -54,3 +54,7 @@ api = [
     "uvloop==0.21.0",
     "xmlschema==4.0.1",
 ]
+test = [
+    "pytest==8.3.5",
+    "pytest-aiohttp==1.1.0",
+]
