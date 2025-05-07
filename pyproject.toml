@@ -1,0 +1,22 @@
+[project]
+name = "kowalski"
+version = "3.0.0"
+description = "Add your description here"
+readme = "README.md"
+authors = []
+requires-python = ">=3.10"
+dependencies = [
+    "brotli==1.1.0",
+    "deepdiff==8.4.2",
+    "fire==0.7.0",
+    "gsutil==5.31",
+    "jinja2>=2.11.2",
+    "pyyaml==6.0.2",
+    "questionary==2.1.0",
+    "requests==2.32.3",
+    "supervisor==4.2.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
