@@ -58,3 +58,6 @@ test = [
     "pytest==8.3.5",
     "pytest-aiohttp==1.1.0",
 ]
+tools = [
+    "penquins==2.4.2",
+]
