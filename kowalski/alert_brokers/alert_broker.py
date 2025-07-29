@@ -528,6 +528,9 @@ class AlertWorker:
         :param kwargs:
         :return:
         """
+        # Always mock the response
+        return self._mock_skyportal_response(method, endpoint, data)
+
         method = method.lower()
         methods = {
             "head": session.head,
@@ -565,6 +568,50 @@ class AlertWorker:
             )
 
         return response
+
+    def _mock_skyportal_response(self, method: str, endpoint: str, data: Optional[Mapping] = None):
+        """Mock response for SkyPortal API calls when in mock mode"""
+        from unittest.mock import MagicMock
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        # Default success response
+        default_response = {"status": "success", "data": []}
+
+        # Custom responses for specific endpoints
+        if endpoint == "/api/instrument":
+            mock_response.json.return_value = {
+                "status": "success",
+                "data": [{"id": 1, "name": self.instrument}]
+            }
+        elif endpoint.startswith("/api/groups/"):
+            mock_response.json.return_value = {
+                "status": "success",
+                "data": {"id": 1, "name": "Test Group"}
+            }
+        elif endpoint == "/api/candidates":
+            mock_response.json.return_value = {"status": "success", "data": {"id": "test"}}
+        elif endpoint == "/api/sources":
+            mock_response.json.return_value = {"status": "success", "data": {"id": "test"}}
+        elif "annotations" in endpoint:
+            mock_response.json.return_value = {"status": "success", "data": []}
+        elif "thumbnails" in endpoint:
+            mock_response.json.return_value = {"status": "success", "data": {"id": "test"}}
+        elif "photometry" in endpoint:
+            mock_response.json.return_value = {"status": "success", "data": {"ids": []}}
+        else:
+            mock_response.json.return_value = default_response
+
+        return mock_response
+
+    def enable_mock_mode(self):
+        """Enable mock mode to avoid real SkyPortal API calls"""
+        self._mock_mode = True
+
+    def disable_mock_mode(self):
+        """Disable mock mode to make real SkyPortal API calls"""
+        self._mock_mode = False
 
     def api_skyportal(
         self, method: str, endpoint: str, data: Optional[Mapping] = None, **kwargs

@@ -204,9 +204,9 @@ class ZTFAlertConsumer(AlertConsumer, ABC):
                 )
 
             # post to SkyPortal
-            alert_worker.alert_sentinel_skyportal(
-                alert, prv_candidates, fp_hists=fp_hists, passed_filters=passed_filters
-            )
+            # alert_worker.alert_sentinel_skyportal(
+            #     alert, prv_candidates, fp_hists=fp_hists, passed_filters=passed_filters
+            # )
 
         # clean up after thyself
         del (
@@ -234,30 +234,30 @@ class ZTFAlertWorker(AlertWorker, ABC):
             return
 
         # get ZTF alert stream ids to program ids mapping
-        self.ztf_program_id_to_stream_id = dict()
-        with timer("Getting ZTF alert stream ids from SkyPortal", self.verbose > 1):
-            response = self.api_skyportal("GET", "/api/streams")
-        if response.json()["status"] == "success" and len(response.json()["data"]) > 0:
-            for stream in response.json()["data"]:
-                if stream.get("name") == "ZTF Public":
-                    self.ztf_program_id_to_stream_id[1] = stream["id"]
-                if stream.get("name") == "ZTF Public+Partnership":
-                    self.ztf_program_id_to_stream_id[2] = stream["id"]
-                if stream.get("name") == "ZTF Public+Partnership+Caltech":
-                    # programid=0 is engineering data
-                    self.ztf_program_id_to_stream_id[0] = stream["id"]
-                    self.ztf_program_id_to_stream_id[3] = stream["id"]
-            if len(self.ztf_program_id_to_stream_id) != 4:
-                log("Failed to map ZTF alert stream ids from SkyPortal to program ids")
-                raise ValueError(
-                    "Failed to map ZTF alert stream ids from SkyPortal to program ids"
-                )
-            log(
-                f"Got ZTF program id to SP stream id mapping: {self.ztf_program_id_to_stream_id}"
-            )
-        else:
-            log("Failed to get ZTF alert stream ids from SkyPortal")
-            raise ValueError("Failed to get ZTF alert stream ids from SkyPortal")
+        # self.ztf_program_id_to_stream_id = dict()
+        # with timer("Getting ZTF alert stream ids from SkyPortal", self.verbose > 1):
+        #     response = self.api_skyportal("GET", "/api/streams")
+        # if response.json()["status"] == "success" and len(response.json()["data"]) > 0:
+        #     for stream in response.json()["data"]:
+        #         if stream.get("name") == "ZTF Public":
+        #             self.ztf_program_id_to_stream_id[1] = stream["id"]
+        #         if stream.get("name") == "ZTF Public+Partnership":
+        #             self.ztf_program_id_to_stream_id[2] = stream["id"]
+        #         if stream.get("name") == "ZTF Public+Partnership+Caltech":
+        #             # programid=0 is engineering data
+        #             self.ztf_program_id_to_stream_id[0] = stream["id"]
+        #             self.ztf_program_id_to_stream_id[3] = stream["id"]
+        #     if len(self.ztf_program_id_to_stream_id) != 4:
+        #         log("Failed to map ZTF alert stream ids from SkyPortal to program ids")
+        #         raise ValueError(
+        #             "Failed to map ZTF alert stream ids from SkyPortal to program ids"
+        #         )
+        #     log(
+        #         f"Got ZTF program id to SP stream id mapping: {self.ztf_program_id_to_stream_id}"
+        #     )
+        # else:
+        #     log("Failed to get ZTF alert stream ids from SkyPortal")
+        #     raise ValueError("Failed to get ZTF alert stream ids from SkyPortal")
 
         # filter pipeline upstream: select current alert, ditch cutouts, and merge with aux data
         # including archival photometry and cross-matches:
