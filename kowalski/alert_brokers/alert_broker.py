@@ -592,7 +592,7 @@ class AlertWorker:
                     "id": 1,
                     "name": "Test Group",
                     "nickname": None,
-                    "filters": [{"filter_id": 1, "name": "filter1"}],
+                    "filters": [{"id": 1, "name": "filter1"}],
                 },
             }
         elif endpoint == "/api/candidates":
