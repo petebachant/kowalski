@@ -588,7 +588,12 @@ class AlertWorker:
         elif endpoint.startswith("/api/groups/"):
             mock_response.json.return_value = {
                 "status": "success",
-                "data": {"id": 1, "name": "Test Group", "nickname": None}
+                "data": {
+                    "id": 1,
+                    "name": "Test Group",
+                    "nickname": None,
+                    "filters": [{"filter_id": 1, "name": "filter1"}],
+                },
             }
         elif endpoint == "/api/candidates":
             mock_response.json.return_value = {"status": "success", "data": {"id": "test"}}
