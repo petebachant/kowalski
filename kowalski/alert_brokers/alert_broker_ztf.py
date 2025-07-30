@@ -337,11 +337,10 @@ class ZTFAlertWorker(AlertWorker, ABC):
             for active_filter in active_filters:
                 try:
                     response = self.api_skyportal_get_group(active_filter["group_id"])
-                    if response.json()["status"] == "success":
+                    response_json = response.json()
+                    if response_json["status"] == "success":
                         group_name = (
-                            response.json()["data"]["nickname"]
-                            if response.json()["data"]["nickname"] is not None
-                            else response.json()["data"]["name"]
+                            response_json["data"].get("nickname", response_json["data"]["name"])
                         )
                         filter_name = [
                             filtr["name"]
