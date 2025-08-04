@@ -277,7 +277,7 @@ class ZTFAlertWorker(AlertWorker, ABC):
         self.filter_monitor.start()
 
         log(f"Loaded {len(self.filter_templates)} user-defined filters:")
-        # log(self.filter_templates)
+        log(self.filter_templates)
 
     def get_active_filters(self):
         """Fetch user-defined filters from own db marked as active."""
