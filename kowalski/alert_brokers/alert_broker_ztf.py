@@ -204,9 +204,9 @@ class ZTFAlertConsumer(AlertConsumer, ABC):
                 )
 
             # post to SkyPortal
-            alert_worker.alert_sentinel_skyportal(
-                alert, prv_candidates, fp_hists=fp_hists, passed_filters=passed_filters
-            )
+            # alert_worker.alert_sentinel_skyportal(
+            #     alert, prv_candidates, fp_hists=fp_hists, passed_filters=passed_filters
+            # )
 
         # clean up after thyself
         del (
@@ -234,30 +234,30 @@ class ZTFAlertWorker(AlertWorker, ABC):
             return
 
         # get ZTF alert stream ids to program ids mapping
-        self.ztf_program_id_to_stream_id = dict()
-        with timer("Getting ZTF alert stream ids from SkyPortal", self.verbose > 1):
-            response = self.api_skyportal("GET", "/api/streams")
-        if response.json()["status"] == "success" and len(response.json()["data"]) > 0:
-            for stream in response.json()["data"]:
-                if stream.get("name") == "ZTF Public":
-                    self.ztf_program_id_to_stream_id[1] = stream["id"]
-                if stream.get("name") == "ZTF Public+Partnership":
-                    self.ztf_program_id_to_stream_id[2] = stream["id"]
-                if stream.get("name") == "ZTF Public+Partnership+Caltech":
-                    # programid=0 is engineering data
-                    self.ztf_program_id_to_stream_id[0] = stream["id"]
-                    self.ztf_program_id_to_stream_id[3] = stream["id"]
-            if len(self.ztf_program_id_to_stream_id) != 4:
-                log("Failed to map ZTF alert stream ids from SkyPortal to program ids")
-                raise ValueError(
-                    "Failed to map ZTF alert stream ids from SkyPortal to program ids"
-                )
-            log(
-                f"Got ZTF program id to SP stream id mapping: {self.ztf_program_id_to_stream_id}"
-            )
-        else:
-            log("Failed to get ZTF alert stream ids from SkyPortal")
-            raise ValueError("Failed to get ZTF alert stream ids from SkyPortal")
+        # self.ztf_program_id_to_stream_id = dict()
+        # with timer("Getting ZTF alert stream ids from SkyPortal", self.verbose > 1):
+        #     response = self.api_skyportal("GET", "/api/streams")
+        # if response.json()["status"] == "success" and len(response.json()["data"]) > 0:
+        #     for stream in response.json()["data"]:
+        #         if stream.get("name") == "ZTF Public":
+        #             self.ztf_program_id_to_stream_id[1] = stream["id"]
+        #         if stream.get("name") == "ZTF Public+Partnership":
+        #             self.ztf_program_id_to_stream_id[2] = stream["id"]
+        #         if stream.get("name") == "ZTF Public+Partnership+Caltech":
+        #             # programid=0 is engineering data
+        #             self.ztf_program_id_to_stream_id[0] = stream["id"]
+        #             self.ztf_program_id_to_stream_id[3] = stream["id"]
+        #     if len(self.ztf_program_id_to_stream_id) != 4:
+        #         log("Failed to map ZTF alert stream ids from SkyPortal to program ids")
+        #         raise ValueError(
+        #             "Failed to map ZTF alert stream ids from SkyPortal to program ids"
+        #         )
+        #     log(
+        #         f"Got ZTF program id to SP stream id mapping: {self.ztf_program_id_to_stream_id}"
+        #     )
+        # else:
+        #     log("Failed to get ZTF alert stream ids from SkyPortal")
+        #     raise ValueError("Failed to get ZTF alert stream ids from SkyPortal")
 
         # filter pipeline upstream: select current alert, ditch cutouts, and merge with aux data
         # including archival photometry and cross-matches:
@@ -276,8 +276,7 @@ class ZTFAlertWorker(AlertWorker, ABC):
         self.filter_monitor = threading.Thread(target=self.reload_filters)
         self.filter_monitor.start()
 
-        log("Loaded user-defined filters:")
-        # log(self.filter_templates)
+        log(f"Loaded {len(self.filter_templates)} user-defined filters")
 
     def get_active_filters(self):
         """Fetch user-defined filters from own db marked as active."""
@@ -336,25 +335,28 @@ class ZTFAlertWorker(AlertWorker, ABC):
         ):
             for active_filter in active_filters:
                 try:
-                    response = self.api_skyportal_get_group(active_filter["group_id"])
-                    if response.json()["status"] == "success":
-                        group_name = (
-                            response.json()["data"]["nickname"]
-                            if response.json()["data"]["nickname"] is not None
-                            else response.json()["data"]["name"]
-                        )
-                        filter_name = [
-                            filtr["name"]
-                            for filtr in response.json()["data"]["filters"]
-                            if filtr["id"] == active_filter["filter_id"]
-                        ][0]
-                    else:
-                        log(
-                            f"Failed to get info on group id={active_filter['group_id']} from SkyPortal"
-                        )
-                        group_name, filter_name = None, None
-                        # raise ValueError(f"Failed to get info on group id={active_filter['group_id']} from SkyPortal")
-                    # log(f"Group name: {group_name}, filter name: {filter_name}")
+                    # response = self.api_skyportal_get_group(active_filter["group_id"])
+                    # response_json = response.json()
+                    # if response_json["status"] == "success":
+                    #     group_name = (
+                    #         response_json["data"].get("nickname", response_json["data"]["name"])
+                    #     )
+                    #     filter_name = [
+                    #         filtr["name"]
+                    #         for filtr in response.json()["data"]["filters"]
+                    #         if filtr["id"] == active_filter["filter_id"]
+                    #     ][0]
+                    # else:
+                    #     log(
+                    #         f"Failed to get info on group id={active_filter['group_id']} from SkyPortal"
+                    #     )
+                    #     group_name, filter_name = None, None
+                    #     # raise ValueError(f"Failed to get info on group id={active_filter['group_id']} from SkyPortal")
+                    # # log(f"Group name: {group_name}, filter name: {filter_name}")
+
+                    # skip the skyportal group and filter name lookup for now
+                    group_name = f"group_{active_filter['group_id']}"
+                    filter_name = f"filter_{active_filter['filter_id']}"
 
                     # prepend upstream aggregation stages:
                     pipeline = deepcopy(self.filter_pipeline_upstream) + bson_loads(
