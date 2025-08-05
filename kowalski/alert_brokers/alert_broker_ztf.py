@@ -276,8 +276,7 @@ class ZTFAlertWorker(AlertWorker, ABC):
         self.filter_monitor = threading.Thread(target=self.reload_filters)
         self.filter_monitor.start()
 
-        log(f"Loaded {len(self.filter_templates)} user-defined filters:")
-        log(self.filter_templates)
+        log(f"Loaded {len(self.filter_templates)} user-defined filters")
 
     def get_active_filters(self):
         """Fetch user-defined filters from own db marked as active."""
@@ -336,24 +335,28 @@ class ZTFAlertWorker(AlertWorker, ABC):
         ):
             for active_filter in active_filters:
                 try:
-                    response = self.api_skyportal_get_group(active_filter["group_id"])
-                    response_json = response.json()
-                    if response_json["status"] == "success":
-                        group_name = (
-                            response_json["data"].get("nickname", response_json["data"]["name"])
-                        )
-                        filter_name = [
-                            filtr["name"]
-                            for filtr in response.json()["data"]["filters"]
-                            if filtr["id"] == active_filter["filter_id"]
-                        ][0]
-                    else:
-                        log(
-                            f"Failed to get info on group id={active_filter['group_id']} from SkyPortal"
-                        )
-                        group_name, filter_name = None, None
-                        # raise ValueError(f"Failed to get info on group id={active_filter['group_id']} from SkyPortal")
-                    # log(f"Group name: {group_name}, filter name: {filter_name}")
+                    # response = self.api_skyportal_get_group(active_filter["group_id"])
+                    # response_json = response.json()
+                    # if response_json["status"] == "success":
+                    #     group_name = (
+                    #         response_json["data"].get("nickname", response_json["data"]["name"])
+                    #     )
+                    #     filter_name = [
+                    #         filtr["name"]
+                    #         for filtr in response.json()["data"]["filters"]
+                    #         if filtr["id"] == active_filter["filter_id"]
+                    #     ][0]
+                    # else:
+                    #     log(
+                    #         f"Failed to get info on group id={active_filter['group_id']} from SkyPortal"
+                    #     )
+                    #     group_name, filter_name = None, None
+                    #     # raise ValueError(f"Failed to get info on group id={active_filter['group_id']} from SkyPortal")
+                    # # log(f"Group name: {group_name}, filter name: {filter_name}")
+
+                    # skip the skyportal group and filter name lookup for now
+                    group_name = f"group_{active_filter['group_id']}"
+                    filter_name = f"filter_{active_filter['filter_id']}"
 
                     # prepend upstream aggregation stages:
                     pipeline = deepcopy(self.filter_pipeline_upstream) + bson_loads(
