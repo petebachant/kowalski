@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from abc import ABC
 from copy import deepcopy
-from typing import Mapping, Sequence
+from typing import Sequence
 
 import dask.distributed
 from kowalski.alert_brokers.alert_broker import AlertConsumer, AlertWorker, EopError
@@ -33,194 +33,223 @@ class ZTFAlertConsumer(AlertConsumer, ABC):
         super().__init__(topic, dask_client, **kwargs)
 
     @staticmethod
-    def process_alert(alert: Mapping, topic: str):
+    def process_alerts(avro_msg: bytes, topic: str):
         """Alert brokering task run by dask.distributed workers
 
-        :param alert: decoded alert from Kafka stream
+        :param avro_msg: avro message from Kafka stream
         :param topic: Kafka stream topic name for bookkeeping
         :return:
         """
-        candid = alert["candid"]
-        object_id = alert["objectId"]
 
         # get worker running current task
         worker = dask.distributed.get_worker()
         alert_worker: ZTFAlertWorker = worker.plugins["worker-init"].alert_worker
 
-        log(f"{topic} {object_id} {candid} {worker.address}")
+        with timer("Decoding alert", alert_worker.verbose > 1):
+            msg_decoded = alert_worker.decode_message(avro_msg)
 
-        # return if this alert packet has already been processed and ingested into collection_alerts:
-        if (
-            retry(
-                alert_worker.mongo.db[alert_worker.collection_alerts].count_documents
-            )({"candid": candid}, limit=1)
-            == 1
-        ):
-            return
-
-        # candid not in db, ingest decoded avro packet into db
-        with timer(f"Mongification of {object_id} {candid}", alert_worker.verbose > 1):
-            alert, prv_candidates, fp_hists = alert_worker.alert_mongify(alert)
-
-        # create alert history
-        all_prv_candidates = deepcopy(prv_candidates) + [deepcopy(alert["candidate"])]
-        with timer(
-            f"Gather all previous candidates for {object_id} {candid}",
-            alert_worker.verbose > 1,
-        ):
-            # get all prv_candidates for this objectId:
-            existing_aux = retry(
-                alert_worker.mongo.db[alert_worker.collection_alerts_aux].find_one
-            )({"_id": object_id}, {"prv_candidates": 1})
+        for alert in msg_decoded:
+            candid = alert["candid"]
+            object_id = alert["objectId"]
             if (
-                existing_aux is not None
-                and len(existing_aux.get("prv_candidates", [])) > 0
-            ):
-                all_prv_candidates += existing_aux["prv_candidates"]
-
-            # get all alerts for this objectId:
-            existing_alerts = list(
-                alert_worker.mongo.db[alert_worker.collection_alerts].find(
-                    {"objectId": object_id}, {"candidate": 1}
-                )
-            )
-            if len(existing_alerts) > 0:
-                all_prv_candidates += [
-                    existing_alert["candidate"] for existing_alert in existing_alerts
-                ]
-            del existing_aux, existing_alerts
-
-        # ML models:
-        with timer(f"MLing of {object_id} {candid}", alert_worker.verbose > 1):
-            scores = alert_worker.alert_filter__ml(alert, all_prv_candidates)
-            alert["classifications"] = scores
-
-        with timer(f"Ingesting {object_id} {candid}", alert_worker.verbose > 1):
-            retry(alert_worker.mongo.insert_one)(
-                collection=alert_worker.collection_alerts, document=alert
-            )
-
-        # prv_candidates: pop nulls - save space
-        prv_candidates = [
-            {kk: vv for kk, vv in prv_candidate.items() if vv is not None}
-            for prv_candidate in prv_candidates
-        ]
-
-        # fp_hists: pop nulls - save space
-        fp_hists = [
-            {kk: vv for kk, vv in fp_hist.items() if vv not in [None, -99999, -99999.0]}
-            for fp_hist in fp_hists
-        ]
-
-        # format fp_hists, add alert_mag, alert_ra, alert_dec
-        # and computing the FP's mag, magerr, snr, limmag3sig, limmag5sig
-        fp_hists = alert_worker.format_fp_hists(alert, fp_hists)
-
-        alert_aux, xmatches, passed_filters = None, None, None
-        # cross-match with external catalogs if objectId not in collection_alerts_aux:
-        if (
-            retry(
-                alert_worker.mongo.db[
-                    alert_worker.collection_alerts_aux
-                ].count_documents
-            )({"_id": object_id}, limit=1)
-            == 0
-        ):
-            with timer(
-                f"Cross-match of {object_id} {candid}", alert_worker.verbose > 1
-            ):
-                xmatches = alert_worker.alert_filter__xmatch(alert)
-
-            alert_aux = {
-                "_id": object_id,
-                "cross_matches": xmatches,
-                "prv_candidates": prv_candidates,
-            }
-
-            # only add the fp_hists if its a recent/new object, which we determine based on either:
-            # - ndethist <= 1, we never detected it before
-            # - we detected it before (maybe missed a few alerts), but the first detection was
-            #   less than 30 days ago, which is the maximum time window of the incoming data
-            #   which means that we still have a lightcurve that dates back to the first detection
-            if (
-                alert["candidate"]["ndethist"] <= 1
-                or (alert["candidate"]["jd"] - alert["candidate"].get("jdstarthist", 0))
-                < 30
-            ):
-                alert_aux["fp_hists"] = fp_hists
-            else:
-                # if we don't save it, empty the fp_hists array to not send to SkyPortal what is not saved here.
-                fp_hists = []
-
-            with timer(f"Aux ingesting {object_id} {candid}", alert_worker.verbose > 1):
-                retry(alert_worker.mongo.insert_one)(
-                    collection=alert_worker.collection_alerts_aux, document=alert_aux
-                )
-
-        else:
-            with timer(
-                f"Aux updating of {object_id} {candid}", alert_worker.verbose > 1
-            ):
-                # update prv_candidates
                 retry(
-                    alert_worker.mongo.db[alert_worker.collection_alerts_aux].update_one
-                )(
-                    {"_id": object_id},
-                    {"$addToSet": {"prv_candidates": {"$each": prv_candidates}}},
-                    upsert=True,
+                    alert_worker.mongo.db[
+                        alert_worker.collection_alerts
+                    ].count_documents
+                )({"candid": candid}, limit=1)
+                == 1
+            ):
+                # this alert has already been processed, skip it
+                log(f"Alert {object_id} {candid} already processed, skipping")
+                continue
+
+            log(f"ztf: {topic} {object_id} {candid} {worker.address}")
+
+            # candid not in db, ingest decoded avro packet into db
+            with timer(
+                f"Mongification of {object_id} {candid}", alert_worker.verbose > 1
+            ):
+                alert, prv_candidates, fp_hists = alert_worker.alert_mongify(alert)
+
+            # create alert history
+            all_prv_candidates = deepcopy(prv_candidates) + [
+                deepcopy(alert["candidate"])
+            ]
+            with timer(
+                f"Gather all previous candidates for {object_id} {candid}",
+                alert_worker.verbose > 1,
+            ):
+                # get all prv_candidates for this objectId:
+                existing_aux = retry(
+                    alert_worker.mongo.db[alert_worker.collection_alerts_aux].find_one
+                )({"_id": object_id}, {"prv_candidates": 1})
+                if (
+                    existing_aux is not None
+                    and len(existing_aux.get("prv_candidates", [])) > 0
+                ):
+                    all_prv_candidates += existing_aux["prv_candidates"]
+
+                # get all alerts for this objectId:
+                existing_alerts = list(
+                    alert_worker.mongo.db[alert_worker.collection_alerts].find(
+                        {"objectId": object_id}, {"candidate": 1}
+                    )
+                )
+                if len(existing_alerts) > 0:
+                    all_prv_candidates += [
+                        existing_alert["candidate"]
+                        for existing_alert in existing_alerts
+                    ]
+                del existing_aux, existing_alerts
+
+            # ML models:
+            with timer(f"MLing of {object_id} {candid}", alert_worker.verbose > 1):
+                scores = alert_worker.alert_filter__ml(alert, all_prv_candidates)
+                alert["classifications"] = scores
+
+            with timer(f"Ingesting {object_id} {candid}", alert_worker.verbose > 1):
+                retry(alert_worker.mongo.insert_one)(
+                    collection=alert_worker.collection_alerts, document=alert
                 )
 
-                # if there is no fp_hists for this object, we don't update anything
-                # the idea is that we start accumulating FP only for new objects, to avoid
-                # having some objects with incomplete FP history, which would be confusing for the filters
-                # either there is full FP, or there isn't any
-                # we also update the fp_hists array we have here with the updated 30-day window
+            # prv_candidates: pop nulls - save space
+            prv_candidates = [
+                {kk: vv for kk, vv in prv_candidate.items() if vv is not None}
+                for prv_candidate in prv_candidates
+            ]
+
+            # fp_hists: pop nulls - save space
+            fp_hists = [
+                {
+                    kk: vv
+                    for kk, vv in fp_hist.items()
+                    if vv not in [None, -99999, -99999.0]
+                }
+                for fp_hist in fp_hists
+            ]
+
+            # format fp_hists, add alert_mag, alert_ra, alert_dec
+            # and computing the FP's mag, magerr, snr, limmag3sig, limmag5sig
+            fp_hists = alert_worker.format_fp_hists(alert, fp_hists)
+
+            alert_aux, xmatches, passed_filters = None, None, None
+            # cross-match with external catalogs if objectId not in collection_alerts_aux:
+            if (
+                retry(
+                    alert_worker.mongo.db[
+                        alert_worker.collection_alerts_aux
+                    ].count_documents
+                )({"_id": object_id}, limit=1)
+                == 0
+            ):
+                with timer(
+                    f"Cross-match of {object_id} {candid}", alert_worker.verbose > 1
+                ):
+                    xmatches = alert_worker.alert_filter__xmatch(alert)
+
+                alert_aux = {
+                    "_id": object_id,
+                    "cross_matches": xmatches,
+                    "prv_candidates": prv_candidates,
+                }
+
+                # only add the fp_hists if its a recent/new object, which we determine based on either:
+                # - ndethist <= 1, we never detected it before
+                # - we detected it before (maybe missed a few alerts), but the first detection was
+                #   less than 30 days ago, which is the maximum time window of the incoming data
+                #   which means that we still have a lightcurve that dates back to the first detection
                 if (
+                    alert["candidate"]["ndethist"] <= 1
+                    or (
+                        alert["candidate"]["jd"]
+                        - alert["candidate"].get("jdstarthist", 0)
+                    )
+                    < 30
+                ):
+                    alert_aux["fp_hists"] = fp_hists
+                else:
+                    # if we don't save it, empty the fp_hists array to not send to SkyPortal what is not saved here.
+                    fp_hists = []
+
+                with timer(
+                    f"Aux ingesting {object_id} {candid}", alert_worker.verbose > 1
+                ):
+                    retry(alert_worker.mongo.insert_one)(
+                        collection=alert_worker.collection_alerts_aux,
+                        document=alert_aux,
+                    )
+
+            else:
+                with timer(
+                    f"Aux updating of {object_id} {candid}", alert_worker.verbose > 1
+                ):
+                    # update prv_candidates
                     retry(
                         alert_worker.mongo.db[
                             alert_worker.collection_alerts_aux
-                        ].count_documents
+                        ].update_one
                     )(
-                        {"_id": alert["objectId"], "fp_hists": {"$exists": True}},
-                        limit=1,
+                        {"_id": object_id},
+                        {"$addToSet": {"prv_candidates": {"$each": prv_candidates}}},
+                        upsert=True,
                     )
-                    == 1
-                ):
-                    fp_hists = alert_worker.update_fp_hists(alert, fp_hists)
-                else:
+
                     # if there is no fp_hists for this object, we don't update anything
-                    # and we empty the fp_hists array to not send to SkyPortal what is not saved here.
-                    fp_hists = []
+                    # the idea is that we start accumulating FP only for new objects, to avoid
+                    # having some objects with incomplete FP history, which would be confusing for the filters
+                    # either there is full FP, or there isn't any
+                    # we also update the fp_hists array we have here with the updated 30-day window
+                    if (
+                        retry(
+                            alert_worker.mongo.db[
+                                alert_worker.collection_alerts_aux
+                            ].count_documents
+                        )(
+                            {"_id": alert["objectId"], "fp_hists": {"$exists": True}},
+                            limit=1,
+                        )
+                        == 1
+                    ):
+                        fp_hists = alert_worker.update_fp_hists(alert, fp_hists)
+                    else:
+                        # if there is no fp_hists for this object, we don't update anything
+                        # and we empty the fp_hists array to not send to SkyPortal what is not saved here.
+                        fp_hists = []
 
-        if config["misc"]["broker"]:
-            # execute user-defined alert filters
-            with timer(f"Filtering of {object_id} {candid}", alert_worker.verbose > 1):
-                passed_filters = alert_worker.alert_filter__user_defined(
-                    alert_worker.filter_templates, alert
-                )
-            if alert_worker.verbose > 1:
-                log(
-                    f"{object_id} {candid} number of filters passed: {len(passed_filters)}"
-                )
+            if config["misc"]["broker"]:
+                # execute user-defined alert filters
+                with timer(
+                    f"Filtering of {object_id} {candid}", alert_worker.verbose > 1
+                ):
+                    passed_filters = alert_worker.alert_filter__user_defined(
+                        alert_worker.filter_templates, alert
+                    )
+                if alert_worker.verbose > 1:
+                    log(
+                        f"{object_id} {candid} number of filters passed: {len(passed_filters)}"
+                    )
 
-            # post to SkyPortal
-            alert_worker.alert_sentinel_skyportal(
-                alert, prv_candidates, fp_hists=fp_hists, passed_filters=passed_filters
+                # post to SkyPortal
+                # alert_worker.alert_sentinel_skyportal(
+                #     alert,
+                #     prv_candidates,
+                #     fp_hists=fp_hists,
+                #     passed_filters=passed_filters,
+                # )
+
+            # clean up after thyself
+            del (
+                alert,
+                prv_candidates,
+                fp_hists,
+                all_prv_candidates,
+                scores,
+                xmatches,
+                alert_aux,
+                passed_filters,
+                candid,
+                object_id,
             )
-
-        # clean up after thyself
-        del (
-            alert,
-            prv_candidates,
-            fp_hists,
-            all_prv_candidates,
-            scores,
-            xmatches,
-            alert_aux,
-            passed_filters,
-            candid,
-            object_id,
-        )
 
         return
 
@@ -234,30 +263,30 @@ class ZTFAlertWorker(AlertWorker, ABC):
             return
 
         # get ZTF alert stream ids to program ids mapping
-        self.ztf_program_id_to_stream_id = dict()
-        with timer("Getting ZTF alert stream ids from SkyPortal", self.verbose > 1):
-            response = self.api_skyportal("GET", "/api/streams")
-        if response.json()["status"] == "success" and len(response.json()["data"]) > 0:
-            for stream in response.json()["data"]:
-                if stream.get("name") == "ZTF Public":
-                    self.ztf_program_id_to_stream_id[1] = stream["id"]
-                if stream.get("name") == "ZTF Public+Partnership":
-                    self.ztf_program_id_to_stream_id[2] = stream["id"]
-                if stream.get("name") == "ZTF Public+Partnership+Caltech":
-                    # programid=0 is engineering data
-                    self.ztf_program_id_to_stream_id[0] = stream["id"]
-                    self.ztf_program_id_to_stream_id[3] = stream["id"]
-            if len(self.ztf_program_id_to_stream_id) != 4:
-                log("Failed to map ZTF alert stream ids from SkyPortal to program ids")
-                raise ValueError(
-                    "Failed to map ZTF alert stream ids from SkyPortal to program ids"
-                )
-            log(
-                f"Got ZTF program id to SP stream id mapping: {self.ztf_program_id_to_stream_id}"
-            )
-        else:
-            log("Failed to get ZTF alert stream ids from SkyPortal")
-            raise ValueError("Failed to get ZTF alert stream ids from SkyPortal")
+        # self.ztf_program_id_to_stream_id = dict()
+        # with timer("Getting ZTF alert stream ids from SkyPortal", self.verbose > 1):
+        #     response = self.api_skyportal("GET", "/api/streams")
+        # if response.json()["status"] == "success" and len(response.json()["data"]) > 0:
+        #     for stream in response.json()["data"]:
+        #         if stream.get("name") == "ZTF Public":
+        #             self.ztf_program_id_to_stream_id[1] = stream["id"]
+        #         if stream.get("name") == "ZTF Public+Partnership":
+        #             self.ztf_program_id_to_stream_id[2] = stream["id"]
+        #         if stream.get("name") == "ZTF Public+Partnership+Caltech":
+        #             # programid=0 is engineering data
+        #             self.ztf_program_id_to_stream_id[0] = stream["id"]
+        #             self.ztf_program_id_to_stream_id[3] = stream["id"]
+        #     if len(self.ztf_program_id_to_stream_id) != 4:
+        #         log("Failed to map ZTF alert stream ids from SkyPortal to program ids")
+        #         raise ValueError(
+        #             "Failed to map ZTF alert stream ids from SkyPortal to program ids"
+        #         )
+        #     log(
+        #         f"Got ZTF program id to SP stream id mapping: {self.ztf_program_id_to_stream_id}"
+        #     )
+        # else:
+        #     log("Failed to get ZTF alert stream ids from SkyPortal")
+        #     raise ValueError("Failed to get ZTF alert stream ids from SkyPortal")
 
         # filter pipeline upstream: select current alert, ditch cutouts, and merge with aux data
         # including archival photometry and cross-matches:
@@ -276,8 +305,7 @@ class ZTFAlertWorker(AlertWorker, ABC):
         self.filter_monitor = threading.Thread(target=self.reload_filters)
         self.filter_monitor.start()
 
-        log("Loaded user-defined filters:")
-        # log(self.filter_templates)
+        log(f"Loaded {len(self.filter_templates)} user-defined filters")
 
     def get_active_filters(self):
         """Fetch user-defined filters from own db marked as active."""
@@ -336,25 +364,28 @@ class ZTFAlertWorker(AlertWorker, ABC):
         ):
             for active_filter in active_filters:
                 try:
-                    response = self.api_skyportal_get_group(active_filter["group_id"])
-                    if response.json()["status"] == "success":
-                        group_name = (
-                            response.json()["data"]["nickname"]
-                            if response.json()["data"]["nickname"] is not None
-                            else response.json()["data"]["name"]
-                        )
-                        filter_name = [
-                            filtr["name"]
-                            for filtr in response.json()["data"]["filters"]
-                            if filtr["id"] == active_filter["filter_id"]
-                        ][0]
-                    else:
-                        log(
-                            f"Failed to get info on group id={active_filter['group_id']} from SkyPortal"
-                        )
-                        group_name, filter_name = None, None
-                        # raise ValueError(f"Failed to get info on group id={active_filter['group_id']} from SkyPortal")
-                    # log(f"Group name: {group_name}, filter name: {filter_name}")
+                    # response = self.api_skyportal_get_group(active_filter["group_id"])
+                    # response_json = response.json()
+                    # if response_json["status"] == "success":
+                    #     group_name = (
+                    #         response_json["data"].get("nickname", response_json["data"]["name"])
+                    #     )
+                    #     filter_name = [
+                    #         filtr["name"]
+                    #         for filtr in response.json()["data"]["filters"]
+                    #         if filtr["id"] == active_filter["filter_id"]
+                    #     ][0]
+                    # else:
+                    #     log(
+                    #         f"Failed to get info on group id={active_filter['group_id']} from SkyPortal"
+                    #     )
+                    #     group_name, filter_name = None, None
+                    #     # raise ValueError(f"Failed to get info on group id={active_filter['group_id']} from SkyPortal")
+                    # # log(f"Group name: {group_name}, filter name: {filter_name}")
+
+                    # skip the skyportal group and filter name lookup for now
+                    group_name = f"group_{active_filter['group_id']}"
+                    filter_name = f"filter_{active_filter['filter_id']}"
 
                     # prepend upstream aggregation stages:
                     pipeline = deepcopy(self.filter_pipeline_upstream) + bson_loads(

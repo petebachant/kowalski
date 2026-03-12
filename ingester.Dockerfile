@@ -124,7 +124,7 @@ COPY Makefile .
 ENV USING_DOCKER=true
 
 RUN source env/bin/activate && \
-    uv pip install packaging setuptools && \
+    uv pip install packaging "setuptools<82" && \
     uv pip install -r requirements/requirements.txt && \
     uv pip install -r requirements/requirements_test.txt && \
     uv pip install -r requirements/requirements_ingester.txt
